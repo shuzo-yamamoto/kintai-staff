@@ -1,0 +1,12 @@
+# 公開リポジトリ。書類・データ・端末の設定は置かない
+*.pdf
+*.xlsx
+*.xls
+*.csv
+*.json
+*.docx
+*.zip
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

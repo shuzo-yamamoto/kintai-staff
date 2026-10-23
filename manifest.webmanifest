@@ -1,0 +1,16 @@
+{
+  "name": "画箋堂 勤怠",
+  "short_name": "勤怠",
+  "description": "画箋堂の勤怠打刻（出勤・退勤・休憩）",
+  "lang": "ja",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F5F3EE",
+  "theme_color": "#1F2A3A",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

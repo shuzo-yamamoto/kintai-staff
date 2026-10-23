@@ -1,0 +1,12 @@
+#!/bin/sh
+# pre-commit — コミットの前に、個人情報・秘密情報が混ざっていないかを調べる（要件定義書 §13.2・§13.6）
+# 調べる仕組みと氏名の一覧は、非公開の本体リポジトリ（隣のフォルダ kintai-app）にある。公開側には置かない
+# 有効にする: git config core.hooksPath .githooks
+ROOT="$(git rev-parse --show-toplevel)"
+CHECKER="$ROOT/../kintai-app/tools/check_public_repo.py"
+if [ ! -f "$CHECKER" ]; then
+  echo "混入チェックの仕組みが見つかりません: $CHECKER"
+  echo "kintai-app（本体）を kintai-staff の隣のフォルダに置いてからコミットしてください。"
+  exit 1
+fi
+python -X utf8 "$CHECKER" --staged "$ROOT"

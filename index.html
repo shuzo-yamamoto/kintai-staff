@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1F2A3A">
+<title>画箋堂 勤怠</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="勤怠">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header id="app-header">
+  <h1>画箋堂 勤怠</h1>
+  <span id="header-sub"></span>
+</header>
+
+<main id="app-main">
+
+<!-- 設定待ち（API の URL が未設定） -->
+<section id="view-setup" class="view" hidden>
+  <div class="card">
+    <h2>準備中です</h2>
+    <p>このサイトの接続先がまだ設定されていません。管理者に連絡してください。</p>
+  </div>
+</section>
+
+<!-- 最初の画面 -->
+<section id="view-start" class="view" hidden>
+  <div id="ios-notice" class="notice" hidden>
+    <strong>iPhone・iPad の方へ</strong>
+    <p>Safari で開いたままログインすると、ホーム画面のアプリではもう一度ログインが必要になります。先に「共有」→「ホーム画面に追加」をして、<b>ホーム画面のアイコンから開いて</b>ログインしてください。</p>
+  </div>
+  <button class="btn btn-primary btn-lg" data-goto="login">自分のスマホで使う（ログイン）</button>
+  <button class="btn btn-ghost" data-goto="register">店舗のタブレットとして登録する</button>
+</section>
+
+<!-- 個人端末のログイン -->
+<section id="view-login" class="view" hidden>
+  <form id="form-login" class="card" autocomplete="off">
+    <h2>ログイン</h2>
+    <label>従業員番号<input id="login-staff" inputmode="numeric" maxlength="20" required></label>
+    <label>PIN<input id="login-pin" type="password" inputmode="numeric" maxlength="12" required></label>
+    <button class="btn btn-primary btn-lg" type="submit">ログイン</button>
+    <button class="btn btn-ghost" type="button" data-goto="start">戻る</button>
+  </form>
+</section>
+
+<!-- 店舗共用端末の登録 -->
+<section id="view-register" class="view" hidden>
+  <form id="form-register" class="card" autocomplete="off">
+    <h2>店舗のタブレットとして登録</h2>
+    <p class="muted">管理者が発行した8桁の登録コードを入力してください（1回だけ使えます）。</p>
+    <label>登録コード<input id="register-code" inputmode="numeric" maxlength="8" required></label>
+    <button class="btn btn-primary btn-lg" type="submit">登録する</button>
+    <button class="btn btn-ghost" type="button" data-goto="start">戻る</button>
+  </form>
+</section>
+
+<!-- PIN の変更 -->
+<section id="view-pin" class="view" hidden>
+  <form id="form-pin" class="card" autocomplete="off">
+    <h2>PIN の変更</h2>
+    <p id="pin-lead" class="muted"></p>
+    <label>今の PIN<input id="pin-current" type="password" inputmode="numeric" maxlength="12" required></label>
+    <label>新しい PIN（4〜12桁の数字）<input id="pin-new" type="password" inputmode="numeric" maxlength="12" required></label>
+    <label>新しい PIN（もう一度）<input id="pin-new2" type="password" inputmode="numeric" maxlength="12" required></label>
+    <button class="btn btn-primary btn-lg" type="submit">変更する</button>
+    <button id="pin-cancel" class="btn btn-ghost" type="button">やめる</button>
+  </form>
+</section>
+
+<!-- 位置情報の説明と同意 -->
+<section id="view-consent" class="view" hidden>
+  <div class="card">
+    <h2>打刻時の位置情報の取得について</h2>
+    <p>勤怠アプリでは、打刻ボタンを押したときだけ、スマートフォンの位置情報を一度取得します。</p>
+    <dl class="consent">
+      <dt>目的</dt><dd>店舗での勤務か、在宅（オンライン）などの店舗外での勤務かを記録するためです。</dd>
+      <dt>取得するとき</dt><dd>打刻ボタンを押した瞬間だけです。打刻以外のときや、勤務時間中に位置を追いかけることはありません。</dd>
+      <dt>記録するもの</dt><dd>「店舗内／店舗外／取得できなかった」の判定、いちばん近い店舗、そこまでのおおよその距離（m）、位置の精度（m）だけです。</dd>
+      <dt>記録しないもの</dt><dd>緯度・経度（地図上の正確な場所）は保存しません。自宅などの場所がわかる形では残りません。</dd>
+      <dt>許可しない場合</dt><dd>打刻はできます。その打刻には「位置が取れなかった」と記録され、管理者が確認します。</dd>
+      <dt>店舗のタブレット</dt><dd>位置情報は取得しません。</dd>
+    </dl>
+    <button id="consent-yes" class="btn btn-primary btn-lg">同意する</button>
+    <button id="consent-no" class="btn btn-ghost">同意しない（位置情報を送らない）</button>
+  </div>
+</section>
+
+<!-- 打刻 -->
+<section id="view-main" class="view" hidden>
+  <div class="card who">
+    <div id="main-name" class="who-name"></div>
+    <div id="main-clock" class="clock"></div>
+    <div id="main-date" class="muted"></div>
+  </div>
+  <div class="card">
+    <div class="row"><span class="muted">シフト</span><span id="main-shift"></span></div>
+    <div class="row"><span class="muted">状態</span><span id="main-state" class="state"></span></div>
+    <ul id="main-punches" class="punches"></ul>
+    <div class="row"><span class="muted">今の締め期間の残業</span><span id="main-ot"></span></div>
+  </div>
+  <div id="main-actions" class="actions"></div>
+  <div class="menu">
+    <button id="menu-back" class="btn btn-ghost" hidden>名前の選択に戻る</button>
+    <button id="menu-pin" class="btn btn-ghost">PIN を変更する</button>
+    <button id="menu-geo" class="btn btn-ghost" hidden>位置情報について</button>
+    <button id="menu-logout" class="btn btn-ghost" hidden>この端末からログアウト</button>
+  </div>
+</section>
+
+<!-- 店舗共用端末: 名前を選ぶ -->
+<section id="view-shared" class="view" hidden>
+  <p class="lead">名前を選んでください</p>
+  <div id="shared-list" class="name-grid"></div>
+  <button id="shared-reload" class="btn btn-ghost">一覧を読み込み直す</button>
+</section>
+
+<!-- 店舗共用端末: PIN -->
+<section id="view-shared-pin" class="view" hidden>
+  <form id="form-shared-pin" class="card" autocomplete="off">
+    <h2 id="shared-pin-name"></h2>
+    <label>PIN<input id="shared-pin" type="password" inputmode="numeric" maxlength="12" required></label>
+    <button class="btn btn-primary btn-lg" type="submit">次へ</button>
+    <button class="btn btn-ghost" type="button" data-goto="shared">戻る</button>
+  </form>
+</section>
+
+</main>
+
+<!-- 確認・入力のモーダル -->
+<div id="modal" class="modal" hidden>
+  <div class="modal-box" role="dialog" aria-modal="true">
+    <h3 id="modal-title"></h3>
+    <div id="modal-body"></div>
+    <div id="modal-buttons" class="modal-buttons"></div>
+  </div>
+</div>
+
+<div id="spinner" class="spinner" hidden><div class="spinner-dot"></div><p>通信しています…</p></div>
+<div id="toast" class="toast" hidden></div>
+
+<script src="js/config.js"></script>
+<script src="js/api.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
