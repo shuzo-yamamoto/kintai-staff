@@ -43,7 +43,7 @@
 <section id="view-login" class="view" hidden>
   <form id="form-login" class="card" autocomplete="off">
     <h2>ログイン</h2>
-    <label>従業員番号<input id="login-staff" inputmode="numeric" maxlength="20" required></label>
+    <label>従業員番号<input id="login-staff" inputmode="numeric" pattern="[0-9]*" maxlength="10" required></label>
     <label>PIN<input id="login-pin" type="password" inputmode="numeric" maxlength="12" required></label>
     <button class="btn btn-primary btn-lg" type="submit">ログイン</button>
     <button class="btn btn-ghost" type="button" data-goto="start">戻る</button>

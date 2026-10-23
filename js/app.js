@@ -20,7 +20,9 @@ const S = {
   token: Store.get('token'),
   me: null,                        // getMe の結果
   shared: { staffId: '', name: '', pin: '' }, // 共用端末で今打刻している人（PIN はメモリにだけ置く）
-  pending: null,                   // 送ったが結果が分からない打刻 {punchType, id}（押し直しは同じ番号で送る）
+  pending: null,                   // まだ成功していない打刻 {punchType, id}（押し直しは同じ番号で送る。§13.6 v1.10）
+  gen: 0,                          // 利用者の世代番号。切り替えのたびに上げ、古い応答は捨てる（§13.6 v1.10）
+  modalResolve: null,              // 表示中のモーダルを閉じる関数（タイマーで閉じるときに使う）
   timers: { clock: null, idle: null, back: null }
 };
 
@@ -48,7 +50,9 @@ function esc(s) {
  * @param {{title:string, html:string, color?:string, buttons:{label:string, value:any, kind?:string}[]}} o
  */
 function modal(o) {
+  closeModal(null); // 前のモーダルが残っていれば「やめる」として終わらせる
   return new Promise((resolve) => {
+    S.modalResolve = resolve;
     const box = $('#modal .modal-box');
     box.className = 'modal-box' + (o.color === '赤' ? ' modal-red' : o.color === '黄' ? ' modal-yellow' : '');
     $('#modal-title').textContent = o.title;
@@ -62,13 +66,22 @@ function modal(o) {
       el.addEventListener('click', () => {
         const v = typeof b.value === 'function' ? b.value() : b.value;
         if (v === undefined) return; // 入力の不足など。モーダルを閉じない
-        $('#modal').hidden = true;
-        resolve(v);
+        closeModal(v);
       });
       bs.appendChild(el);
     });
     $('#modal').hidden = false;
   });
+}
+
+/**
+ * 表示中のモーダルを閉じ、待っている処理に value を返す（タイマーで閉じるときは null＝やめる）
+ */
+function closeModal(value) {
+  $('#modal').hidden = true;
+  const r = S.modalResolve;
+  S.modalResolve = null;
+  if (r) r(value);
 }
 
 /** API を呼ぶ（スピナー付き）。ログインが無効になったら最初の画面へ戻す */
@@ -116,7 +129,7 @@ $('#form-login').addEventListener('submit', async (ev) => {
   ev.preventDefault();
   const staffId = $('#login-staff').value.trim();
   const pin = $('#login-pin').value.trim();
-  if (!/^[0-9A-Za-z]{1,20}$/.test(staffId)) { toast('従業員番号を入力してください。'); return; }
+  if (!/^\d{1,10}$/.test(staffId)) { toast('従業員番号は数字で入力してください。'); return; }
   if (!/^\d{4,12}$/.test(pin)) { toast('PIN は 4〜12 桁の数字です。'); return; }
   try {
     const d = await call('loginPersonal', { staffId, pin });
@@ -154,13 +167,18 @@ $('#form-register').addEventListener('submit', async (ev) => {
 // 本人の状態と打刻の画面
 // ---------------------------------------------------------------
 async function loadMe() {
+  const gen = S.gen;
+  let me;
   try {
-    S.me = await call('getMe', authFields());
+    me = await call('getMe', authFields());
   } catch (e) {
+    if (gen !== S.gen) return; // 待っている間に利用者が切り替わった
     toast(e.message, 6000);
     if (S.mode === 'shared') sharedListView();
     return;
   }
+  if (gen !== S.gen) return; // 待っている間に利用者が切り替わった（前の人の画面を出さない）
+  S.me = me;
   if (S.me.mustChangePin) { pinView(true); return; }
   if (S.mode === 'personal' && !S.me.geoConsent && !Store.get('geoDeclined')) { show('consent'); return; }
   renderMain();
@@ -225,15 +243,18 @@ async function doPunch(punchType, label) {
     html: '<p class="big-time">' + esc($('#main-clock').textContent) + '</p><p class="muted">記録される時刻はサーバーの時刻です。</p>',
     buttons: [{ label: 'やめる', value: false }, { label: '記録する', value: true, kind: 'primary' }]
   });
-  if (!ok) return;
+  const gen = S.gen;
+  if (!ok || gen !== S.gen) return;
 
-  // 押し直し（前回の結果が分からない打刻）は同じ番号で送る
+  // 押し直しは同じ番号で送る。成功するまで番号を持ち続ける（記録されたか分からない失敗でも、
+  // サーバーは同じ番号を2回記録せず、後の処理が残っていれば続きを行う。§13.6 v1.10）
   if (!S.pending || S.pending.punchType !== punchType) S.pending = { punchType, id: newRequestId() };
   const body = Object.assign(authFields(), { punchType, clientRequestId: S.pending.id });
-  if (S.mode === 'personal' && S.me.geoConsent) {
+  if (geoAllowed()) {
     spinner(true);
     body.geo = await getPositionOnce();
     spinner(false);
+    if (gen !== S.gen) return;
   }
 
   for (let round = 0; round < 4; round++) {
@@ -241,11 +262,13 @@ async function doPunch(punchType, label) {
     try {
       r = await call('punch', body);
     } catch (e) {
-      if (!e.network) S.pending = null; // サーバーが断った打刻は記録されていない
+      if (gen !== S.gen) return;
       await modal({ title: '打刻できませんでした', html: '<p>' + esc(e.message) + '</p>', color: '赤', buttons: [{ label: '閉じる', value: true, kind: 'primary' }] });
+      if (gen !== S.gen) return;
       if (!e.network && S.token) await loadMe();
       return;
     }
+    if (gen !== S.gen) return; // 待っている間に利用者が切り替わった
     if (r.status === 'needs_ack') {
       const a = r.alert;
       const yes = await modal({
@@ -253,15 +276,15 @@ async function doPunch(punchType, label) {
         html: '<p>' + esc(a.text) + '</p>',
         buttons: [{ label: 'やめる', value: false }, { label: '確認しました', value: true, kind: 'primary' }]
       });
-      if (!yes) { S.pending = null; return; }
+      if (!yes || gen !== S.gen) { if (gen === S.gen) S.pending = null; return; }
       body.ackAlertType = a.alertType;
     } else if (r.status === 'needs_interval_reason') {
       const reason = await intervalReasonModal(r.interval);
-      if (!reason) { S.pending = null; return; }
+      if (!reason || gen !== S.gen) { if (gen === S.gen) S.pending = null; return; }
       body.intervalReason = reason;
     } else if (r.status === 'needs_work_mode') {
       const mode = await workModeModal(r.suggested, r.geoResult);
-      if (!mode) { S.pending = null; return; }
+      if (!mode || gen !== S.gen) { if (gen === S.gen) S.pending = null; return; }
       body.workMode = mode;
     } else {
       S.pending = null;
@@ -269,6 +292,13 @@ async function doPunch(punchType, label) {
       return;
     }
   }
+}
+
+/**
+ * 位置を取ってよいか（§13.4・§13.6 v1.10 Q2）: 個人端末で、本人が同意していて、この端末で「同意しない」を選んでいないとき
+ */
+function geoAllowed() {
+  return S.mode === 'personal' && !!S.me && S.me.geoConsent === true && !Store.get('geoDeclined');
 }
 
 /** 勤務間インターバルの理由（区分＋補足） */
@@ -319,10 +349,11 @@ async function punchDone(r) {
   if (S.mode === 'shared') {
     // 共用端末: 少し表示してから名前の選択に戻る
     clearTimeout(S.timers.back);
-    S.timers.back = setTimeout(() => { $('#modal').hidden = true; sharedListView(); }, (r.clockOutNotice ? 3 : 1) * SHARED_RETURN_SEC * 1000);
+    const gen = S.gen;
+    S.timers.back = setTimeout(() => closeModal(true), (r.clockOutNotice ? 3 : 1) * SHARED_RETURN_SEC * 1000);
     await modal({ title: '記録しました', html, buttons: [{ label: '終わる', value: true, kind: 'primary' }] });
     clearTimeout(S.timers.back);
-    sharedListView();
+    if (gen === S.gen) sharedListView();
     return;
   }
   await modal({ title: '記録しました', html, buttons: [{ label: '閉じる', value: true, kind: 'primary' }] });
@@ -345,10 +376,12 @@ $('#form-pin').addEventListener('submit', async (ev) => {
   const newPin = $('#pin-new').value.trim();
   if (!/^\d{4,12}$/.test(newPin)) { toast('新しい PIN は 4〜12 桁の数字です。'); return; }
   if (newPin !== $('#pin-new2').value.trim()) { toast('新しい PIN が2回とも同じになるように入力してください。'); return; }
+  const gen = S.gen;
   try {
     const p = { token: S.token, currentPin, newPin };
     if (S.mode === 'shared') p.staffId = S.shared.staffId;
     await call('changePin', p);
+    if (gen !== S.gen) return; // 待っている間に利用者が切り替わった
     toast('PIN を変更しました。');
     if (S.mode === 'shared') S.shared.pin = newPin;
     await loadMe();
@@ -386,6 +419,9 @@ $('#menu-logout').addEventListener('click', async () => {
 // 店舗共用端末
 // ---------------------------------------------------------------
 function clearShared() {
+  S.gen += 1;
+  S.pending = null;
+  closeModal(null);
   S.shared = { staffId: '', name: '', pin: '' };
   $('#shared-pin').value = '';
   clearTimeout(S.timers.idle);
@@ -406,6 +442,8 @@ async function sharedListView() {
       b.className = 'btn name-btn';
       b.textContent = s.name;
       b.addEventListener('click', () => {
+        S.gen += 1;
+        S.pending = null;
         S.shared = { staffId: s.staffId, name: s.name, pin: '' };
         $('#shared-pin-name').textContent = s.name + ' さん';
         $('#shared-pin').value = '';
@@ -434,7 +472,7 @@ $('#shared-reload').addEventListener('click', () => sharedListView());
 function resetIdle() {
   clearTimeout(S.timers.idle);
   if (S.mode !== 'shared') return;
-  S.timers.idle = setTimeout(() => { $('#modal').hidden = true; sharedListView(); }, SHARED_IDLE_SEC * 1000);
+  S.timers.idle = setTimeout(() => sharedListView(), SHARED_IDLE_SEC * 1000);
 }
 ['click', 'keydown', 'touchstart'].forEach((t) => document.addEventListener(t, () => { if (S.shared.staffId) resetIdle(); }, { passive: true }));
 
