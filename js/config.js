@@ -5,5 +5,5 @@
  * この URL は公開してよい（守りは PIN とトークン）。ここに PIN・トークン・メールアドレス・氏名を書かないこと
  */
 window.KINTAI_CONFIG = {
-  apiUrl: ''
+  apiUrl: 'https://script.google.com/macros/s/AKfycby2HkooRQdh7gyKdr5mS-fSX_GPPVt4PutmwBbj_vTjllOsVb9iJLUwHUTdMGN9Fj4M/exec'
 };
