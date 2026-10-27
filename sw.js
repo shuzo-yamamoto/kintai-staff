@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const CACHE_VERSION = 'kintai-staff-v0.1.2';
+const CACHE_VERSION = 'kintai-staff-v0.2.0';
 const APP_SHELL = [
   './',
   './index.html',

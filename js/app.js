@@ -138,7 +138,7 @@ $('#form-login').addEventListener('submit', async (ev) => {
     S.token = d.token;
     S.mode = 'personal';
     $('#login-pin').value = '';
-    await loadMe();
+    await showMe(d.me);
   } catch (e) {
     $('#login-pin').value = '';
     toast(e.message, 6000);
@@ -178,10 +178,23 @@ async function loadMe() {
     return;
   }
   if (gen !== S.gen) return; // 待っている間に利用者が切り替わった（前の人の画面を出さない）
+  applyMe(me);
+}
+
+/**
+ * 本人の状態を画面に出す（getMe の結果、またはログイン・PIN の変更・打刻の応答に含まれる状態。§13.6 v1.16）
+ * 応答に状態が含まれていれば getMe を呼び直さない（1つの操作を1回の呼び出しにするため）
+ */
+function applyMe(me) {
   S.me = me;
   if (S.me.mustChangePin) { pinView(true); return; }
   if (S.mode === 'personal' && !S.me.geoConsent && !Store.get('geoDeclined')) { show('consent'); return; }
   renderMain();
+}
+
+/** 応答に状態があればそれを出し、無ければ getMe を呼ぶ */
+async function showMe(me) {
+  if (me) applyMe(me); else await loadMe();
 }
 
 function renderMain() {
@@ -356,8 +369,10 @@ async function punchDone(r) {
     if (gen === S.gen) sharedListView();
     return;
   }
+  const gen = S.gen;
   await modal({ title: '記録しました', html, buttons: [{ label: '閉じる', value: true, kind: 'primary' }] });
-  await loadMe();
+  if (gen !== S.gen) return;
+  await showMe(r.me); // 打刻の応答に含まれる状態を使う（getMe を呼び直さない。§13.6 v1.16）
 }
 
 // ---------------------------------------------------------------
@@ -380,11 +395,11 @@ $('#form-pin').addEventListener('submit', async (ev) => {
   try {
     const p = { token: S.token, currentPin, newPin };
     if (S.mode === 'shared') p.staffId = S.shared.staffId;
-    await call('changePin', p);
+    const d = await call('changePin', p);
     if (gen !== S.gen) return; // 待っている間に利用者が切り替わった
     toast('PIN を変更しました。');
     if (S.mode === 'shared') S.shared.pin = newPin;
-    await loadMe();
+    await showMe(d && d.me); // 応答に含まれる状態を使う（§13.6 v1.16）
   } catch (e) {
     toast(e.message, 6000);
   }
