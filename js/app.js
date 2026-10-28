@@ -33,7 +33,21 @@ function show(view) {
   $$('.view').forEach((v) => { v.hidden = v.id !== 'view-' + view; });
   window.scrollTo(0, 0);
 }
-function spinner(on) { $('#spinner').hidden = !on; }
+/** 全画面のスピナー（text は下に出す文言。打刻では「記録中…」。§13.6 v1.20） */
+function spinner(on, text) {
+  if (on) $('#spinner-text').textContent = text || '通信しています…';
+  $('#spinner').hidden = !on;
+}
+
+/**
+ * 待ち時間をブラウザのコンソールに1行で出す（§13.6 v1.20）。端末で体感の遅さの内訳を見るためのもの。
+ * 出すのは操作名とミリ秒だけ。座標・トークン・PIN・従業員番号は出さない
+ */
+function timingLog(label, ms) {
+  try {
+    console.info('[kintai-timing] ' + label + ' ' + Object.keys(ms).map((k) => k + '=' + Math.round(ms[k]) + 'ms').join(' '));
+  } catch (e) { /* コンソールが無い端末では何もしない */ }
+}
 function toast(msg, ms = 3500) {
   const t = $('#toast');
   t.textContent = msg;
@@ -84,15 +98,22 @@ function closeModal(value) {
   if (r) r(value);
 }
 
-/** API を呼ぶ（スピナー付き）。ログインが無効になったら最初の画面へ戻す */
-async function call(action, payload) {
-  spinner(true);
+/**
+ * API を呼ぶ（スピナー付き）。ログインが無効になったら最初の画面へ戻す
+ * 通信の時間（送ってから応答まで）を S.lastApiMs に置き、コンソールに出す（§13.6 v1.20）
+ * @param {string} [label] スピナーの文言
+ */
+async function call(action, payload, label) {
+  spinner(true, label);
+  const t0 = Date.now();
   try {
     return await apiCall(action, payload);
   } catch (e) {
     if (/もう一度ログインしてください/.test(e.message)) resetDevice();
     throw e;
   } finally {
+    S.lastApiMs = Date.now() - t0;
+    timingLog(action, { api: S.lastApiMs });
     spinner(false);
   }
 }
@@ -251,6 +272,9 @@ function startClock() {
  * 打刻する。サーバーが確認を求めたら（残業アラート・インターバルの理由・勤務区分）入力してから送り直す
  */
 async function doPunch(punchType, label) {
+  // 位置は打刻ボタンを押した時点で取り始め、確認画面の間に並行して取る（§13.4 の「打刻ボタンを押した瞬間」。
+  // 新しく測った値だけを使う。「やめる」なら取った位置は送らずに捨てる。§13.6 v1.20）
+  const geoPromise = geoAllowed() ? getPositionOnce() : null;
   const ok = await modal({
     title: label + ' を記録します',
     html: '<p class="big-time">' + esc($('#main-clock').textContent) + '</p><p class="muted">記録される時刻はサーバーの時刻です。</p>',
@@ -258,22 +282,25 @@ async function doPunch(punchType, label) {
   });
   const gen = S.gen;
   if (!ok || gen !== S.gen) return;
+  spinner(true, '記録中…'); // 「記録する」を押したらすぐ出す（v1.20）
+  const tOk = Date.now();
+  const ms = { geoWait: 0, api: 0 };
 
   // 押し直しは同じ番号で送る。成功するまで番号を持ち続ける（記録されたか分からない失敗でも、
   // サーバーは同じ番号を2回記録せず、後の処理が残っていれば続きを行う。§13.6 v1.10）
   if (!S.pending || S.pending.punchType !== punchType) S.pending = { punchType, id: newRequestId() };
   const body = Object.assign(authFields(), { punchType, clientRequestId: S.pending.id });
-  if (geoAllowed()) {
-    spinner(true);
-    body.geo = await getPositionOnce();
-    spinner(false);
-    if (gen !== S.gen) return;
+  if (geoPromise) {
+    body.geo = await geoPromise; // 「記録する」を押した後に待った時間だけを数える
+    ms.geoWait = Date.now() - tOk;
+    if (gen !== S.gen) { spinner(false); return; }
   }
 
   for (let round = 0; round < 4; round++) {
     let r;
     try {
-      r = await call('punch', body);
+      r = await call('punch', body, '記録中…');
+      ms.api += S.lastApiMs;
     } catch (e) {
       if (gen !== S.gen) return;
       await modal({ title: '打刻できませんでした', html: '<p>' + esc(e.message) + '</p>', color: '赤', buttons: [{ label: '閉じる', value: true, kind: 'primary' }] });
@@ -301,7 +328,12 @@ async function doPunch(punchType, label) {
       body.workMode = mode;
     } else {
       S.pending = null;
-      await punchDone(r);
+      // 画面の表示の時間: 応答を受けてから結果の画面を出し、ブラウザが描くまで（v1.20）
+      const tResp = Date.now();
+      const done = punchDone(r); // 結果のモーダルはこの中ですぐ出る（閉じるのを待つ前に計る）
+      const report = () => timingLog('punch-total', { total: Date.now() - tOk, geoWait: ms.geoWait, api: ms.api, render: Date.now() - tResp });
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => setTimeout(report, 0)); else report();
+      await done;
       return;
     }
   }
